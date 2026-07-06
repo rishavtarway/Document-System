@@ -1,5 +1,3 @@
-from __future__ import annotations
+from app.core.config import settings, UPLOAD_PATH, DATA_PATH
 
-from app.core.config import settings
-
-__all__ = ["settings"]
+__all__ = ["settings", "UPLOAD_PATH", "DATA_PATH"]
