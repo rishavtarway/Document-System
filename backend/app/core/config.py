@@ -20,10 +20,16 @@ class Settings(BaseSettings):
     minio_secret_key: str = "minioadmin"
     minio_bucket: str = "documents"
     
+    llm_provider: str = "groq"  # groq | deepseek | openrouter
+
+    groq_api_key: str = ""
+    groq_model: str = "llama-3.3-70b-versatile"
+    groq_vision_model: str = "llama-3.2-90b-vision-preview"
+
     deepseek_api_key: str = ""
     deepseek_model: str = "deepseek-chat"
     openrouter_api_key: str = ""
-    use_openrouter: bool = False
+    openrouter_model: str = "deepseek/deepseek-chat"
     
     ocr_engine: str = "tesseract"
     azure_doc_intelligence_endpoint: str = ""
