@@ -1,35 +1,57 @@
-export interface DocumentResponse {
+export interface Document {
   id: string
   filename: string
-  content_type: string | null
-  file_size: number
   document_type: string | null
+  type_confidence: number | null
   status: string
-  extraction: ExtractionResult | null
-  created_at: string
-  updated_at: string
+  file_size: number
+  is_new_type: boolean
+  created_at: string | null
 }
 
-export interface ExtractionResult {
+export interface ExtractionField {
   id: string
+  field_name: string
+  extracted_value: string | null
+  confidence_score: number
+  needs_review: boolean
+  is_gibberish: boolean
+  reasoning: string | null
+  alternatives: string[] | null
+  corrected_value: string | null
+  mcq_dialogs: MCQDialog[]
+}
+
+export interface MCQDialog {
+  id: string
+  question: string
+  options: MCQOption[]
+  context_hint: string | null
+  default_selection: number
+  allow_custom_input: boolean
+  resolved: boolean
+}
+
+export interface MCQOption {
+  id: number
+  label: string
+  value: string
+  explanation: string
+}
+
+export interface ExtractionsResponse {
   document_id: string
-  document_type: string
-  confidence: number
-  data: Record<string, unknown>
-  validations: ValidationResult[]
-  status: string
-  created_at: string
-  updated_at: string
+  document_type: string | null
+  extractions: ExtractionField[]
+  review_needed: boolean
 }
 
-export interface ValidationResult {
-  field: string
+export interface DocumentStatus {
+  document_id: string
+  filename: string
+  document_type: string | null
+  type_confidence: number | null
   status: string
-  message: string | null
-  suggested_value: string | null
-}
-
-export interface CorrectionRequest {
-  field_path: string
-  corrected_value: unknown
+  is_new_type: boolean
+  created_at: string | null
 }

@@ -1,12 +1,12 @@
 {
-  "name": "document-intelligence-frontend",
+  "name": "doc-intelligence-frontend",
+  "version": "2.0.0",
   "private": true,
-  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite --port 3000 --host"
   },
   "dependencies": {
     "react": "^18.3.1",

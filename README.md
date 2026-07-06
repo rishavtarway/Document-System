@@ -1,267 +1,357 @@
-# Document Intelligence System
+# AI-Powered Document Intelligence System
 
-AI-powered document processing system that automatically classifies, extracts, validates, and exposes structured data from business documents (Invoices, Purchase Orders, Contracts, Resumes).
+An intelligent, self-improving document processing system that automatically classifies, extracts, validates, and learns from user feedback. Handles any document type — known or unknown.
 
-## Architecture Overview
+## System Architecture
 
 ```
-┌─────────────┐     ┌─────────────────────────────────────┐     ┌──────────┐
-│   Frontend  │────▶│            Backend (FastAPI)        │────▶│ SQLite   │
-│  (React/TS) │     │                                     │     │ Database │
-└─────────────┘     │  ┌─────────┐  ┌───────────────┐     │     └──────────┘
-                    │  │Upload   │  │Document       │     │
-                    │  │Endpoint │──▶│Classifier (AI)│     │
-                    │  └─────────┘  └───────┬───────┘     │
-                    │                       ▼              │
-                    │  ┌──────────────────────────────┐    │
-                    │  │  Extractor Registry          │    │
-                    │  │  ┌────────┐ ┌───────────┐    │    │
-                    │  │  │Invoice │ │Purchase   │    │    │
-                    │  │  │        │ │Order      │    │    │
-                    │  │  ├────────┤ ├───────────┤    │    │
-                    │  │  │Contract│ │Resume     │    │    │
-                    │  │  └────────┘ └───────────┘    │    │
-                    │  └───────────┬──────────────────┘    │
-                    │              ▼                       │
-                    │  ┌──────────────────────────────┐    │
-                    │  │  Validator                   │    │
-                    │  │  (Deterministic + AI checks) │    │
-                    │  └───────────┬──────────────────┘    │
-                    │              ▼                       │
-                    │  ┌──────────────────────────────┐    │
-                    │  │  User Correction Workflow    │    │
-                    │  │  (Review → Edit → Save)     │    │
-                    │  └──────────────────────────────┘    │
-                    │                                     │
-                    │  ┌──────────────────────────────┐    │
-                    │  │  Export / API Endpoints      │    │
-                    │  │  (JSON output for downstream)│    │
-                    │  └──────────────────────────────┘    │
-                    └─────────────────────────────────────┘
+┌──────────────┐    ┌──────────────────────────────────────────────────────┐    ┌──────────────┐
+│   Frontend   │    │                   Backend (FastAPI)                  │    │  PostgreSQL  │
+│  (React/TS)  │───▶│                                                    │───▶│   + pgvector │
+└──────────────┘    │  ┌──────────┐  ┌──────────────┐  ┌──────────────┐  │    │              │
+                    │  │Upload    │─▶│  Document    │─▶│  Intelligent │  │    │  Documents   │
+                    │  │Endpoint  │  │  Classifier  │  │  Extractor   │  │    │  Extractions │
+                    │  └──────────┘  │  (AI + regex)│  │  (AI + vec)  │  │    │  MCQ Dialogs │
+                    │                └──────────────┘  └──────┬───────┘  │    │  Schemas     │
+                    │                                         │          │    │  Patterns    │
+                    │                ┌──────────────┐  ┌──────▼───────┐  │    │  Corrections │
+                    │                │   MCQ Gen    │  │  Validation  │  │    └──────────────┘
+                    │                │  (low conf)  │  │ (determin.)  │  │
+                    │                └──────┬───────┘  └──────┬───────┘  │    ┌──────────────┐
+                    │                       │                 │          │    │    Redis     │
+                    │                ┌──────▼─────────────────▼───────┐  │───▶│              │
+                    │                │    Learning Service           │  │    │  Cache +     │
+                    │                │    (vector store + pattern)   │  │    │  Celery      │
+                    │                └──────────────────────────────┘  │    └──────────────┘
+                    │                                                   │
+                    │  ┌─────────────────────────────────────────────┐  │    ┌──────────────┐
+                    │  │          Celery Worker (async)              │  │    │    MinIO     │
+                    │  │  OCR · PDF · Image · Long-running tasks     │  │───▶│              │
+                    │  └─────────────────────────────────────────────┘  │    │ Doc Storage  │
+                    └──────────────────────────────────────────────────────┘    └──────────────┘
 ```
 
-## Design Decisions
+## Key Features
 
-### What's Handled by AI vs. Deterministic Logic
-
-| Concern | Approach | Why |
-|---------|----------|-----|
-| **Document Classification** | AI (GPT-4o) | Documents vary widely in format; AI understands semantic content and layout |
-| **Field Extraction** | AI (GPT-4o) | Handles variations in layout, phrasing, and formatting; extracts meaning |
-| **Field Validation** | Deterministic (regex, type checks, business rules) | Format validation (email, phone, dates) is well-defined and should be deterministic |
-| **Confidence Scoring** | Hybrid: AI provides per-field confidence + deterministic rules boost/lower overall score | Combines model certainty with rule-based verification |
-| **Cross-field Checks** | Deterministic (e.g., total vs subtotal comparison) | Business logic that should be consistent and explainable |
-| **Data Persistence** | Deterministic (SQLAlchemy + SQLite) | Standard database operations |
-
-### Extensibility for New Document Types
-
-New document types are added via a **plugin-based extractor registry**:
-
-1. Create a new extractor class in `backend/core/extractors/` that extends `BaseExtractor`
-2. Define the `extraction_prompt` (what fields the AI should extract)
-3. Define `validation_rules` (deterministic checks for the fields)
-4. Register the extractor in `backend/core/extractors/__init__.py`
-
-```python
-# Example: Adding a "Bank Statement" extractor
-class BankStatementExtractor(BaseExtractor):
-    document_type = "bank_statement"
-
-    @property
-    def extraction_prompt(self):
-        return "Extract account holder, account number, statement period, transactions..."
-
-    @property
-    def validation_rules(self):
-        return {
-            "account_holder": {"required": True, "type": "string"},
-            "statement_balance": {"required": True, "type": "number"},
-        }
-
-# Register in __init__.py
-EXTRACTOR_REGISTRY["bank_statement"] = BankStatementExtractor
-```
-
-The classifier automatically detects new document types if they appear in extracted prompts, and the system routes to the right extractor via the registry.
-
-### Handling Low-Confidence AI Responses
-
-1. **Confidence Thresholds**: Documents below `0.6` classification confidence are flagged as `unknown` and not auto-processed
-2. **Validation Layer**: Each extracted field is validated; errors surface to the user with suggested corrections
-3. **Human-in-the-Loop**: Users can review, edit, and correct any field; corrections are saved separately
-4. **Reprocessing**: Users can trigger re-extraction at any time
-5. **Fallback**: If extraction fails entirely, raw text is stored for manual review
-
-### Downstream System Integration
-
-- **REST API**: All processed data is available via JSON endpoints
-- **Export Endpoint**: `GET /api/documents/{id}/export` returns structured data with metadata
-- **Webhook-ready**: Architecture supports adding webhooks to push data to ERP, CRM, or document management systems
-- **Standard JSON Schema**: Each document type has a consistent Pydantic schema for predictable output
+- **Multi-document support** — Invoices, POs, Contracts, Resumes, and **any new type** discovered dynamically
+- **AI + deterministic hybrid** — AI handles ambiguity, deterministic logic handles validation and business rules
+- **Confidence scoring** — Every extraction is scored; low-confidence fields trigger interactive MCQ dialogs
+- **Gibberish detection** — Detects poor OCR/random text and suggests intelligent corrections
+- **MCQ clarification dialogs** — When uncertain, the system asks the user targeted multiple-choice questions with explanations
+- **Learning system** — User corrections are stored in a vector database; patterns improve extraction over time
+- **Extensible plugin architecture** — New document types added by registering a schema (no code changes)
+- **Async processing** — Celery workers handle OCR and AI extraction in the background
+- **Full REST API** — JSON export for downstream system integration
+- **Dark mode UI** — Modern React frontend with real-time MCQ dialogs
 
 ## Tech Stack
 
-| Component | Technology | Rationale |
-|-----------|-----------|-----------|
-| **Backend Framework** | FastAPI (Python) | Async, auto-docs, pydantic integration, high performance |
-| **AI Model** | OpenAI GPT-4o | Best-in-class document understanding, JSON mode for structured output |
-| **Database** | SQLite (via SQLAlchemy) | Zero-config, sufficient for demo/medium scale |
-| **Frontend** | React 18 + TypeScript + Tailwind CSS | Modern, type-safe, responsive UI |
-| **Build Tool** | Vite | Fast dev server, optimized builds |
-| **Validation** | Regex + type checks + business rules | Deterministic, explainable, low-latency |
-| **PDF Processing** | PyMuPDF (fitz) | Fast PDF text extraction |
-| **Containerization** | Docker / docker-compose | Easy deployment |
+| Layer | Technology | Rationale |
+|-------|-----------|-----------|
+| **Backend** | FastAPI (Python 3.12) | Async, auto-docs, Pydantic integration |
+| **AI Model** | DeepSeek-V3 (via API/OpenRouter) | Cost-effective, strong document understanding |
+| **Database** | PostgreSQL + pgvector | Relational data + vector similarity search |
+| **Cache/Queue** | Redis + Celery | Async processing, background tasks |
+| **Object Storage** | MinIO | S3-compatible document storage |
+| **OCR** | Tesseract + PyMuPDF | Text extraction from PDFs/images |
+| **Frontend** | React 18 + TypeScript + Tailwind | Modern, type-safe UI with MCQ dialogs |
+| **Vector Store** | pgvector (IVFFlat index) | Semantic pattern matching for learning |
+
+## Design Decisions
+
+### AI vs Deterministic Split
+
+| Concern | Approach | Why |
+|---------|----------|-----|
+| **Document classification** | AI (LLM) + regex pattern matching | Fast path for known types, AI for ambiguity |
+| **Field extraction** | AI (LLM) | Handles variation in layout, formatting |
+| **Field validation** | Deterministic | Email, phone, date formats are well-defined |
+| **Gibberish detection** | Deterministic (character analysis) | Fast, reliable, no AI cost |
+| **Confidence scoring** | Hybrid (AI + validation + patterns) | Combines model certainty with business rules |
+| **Cross-field validation** | Deterministic | e.g., total vs subtotal comparison |
+| **MCQ generation** | AI (LLM) | Creates human-readable options with reasoning |
+| **Pattern learning** | AI + vector search | Extracts patterns from corrections, stores for similarity |
+
+### Extensibility Strategy
+
+1. **Schema registry** — Document type definitions stored in PostgreSQL, loaded at runtime
+2. **Plugin architecture** — New types added via `document_schemas` table (no backend code changes)
+3. **Dynamic discovery** — Unknown document types trigger AI schema creation on-the-fly
+4. **Vector memory** — Patterns learned from corrections improve extraction for similar documents
+5. **Few-shot ready** — 3-5 corrected documents of a new type builds reliable extraction patterns
+
+### Low-Confidence Handling
+
+1. **Confidence threshold system**:
+   - `>= 0.8`: Auto-approve
+   - `0.5 - 0.8`: Flag for review (field highlighted in UI)
+   - `< 0.5`: Generate MCQ dialog with options
+
+2. **MCQ generation** considers:
+   - Common OCR errors (0/O, 1/I/l, 5/S)
+   - Context from surrounding text
+   - Historical patterns from similar documents
+   - Provides explanations for each option
+
+3. **Gibberish detection**:
+   - Checks special character ratio > 50%
+   - Checks consonant streaks > 6
+   - Empty / very short values flagged
+
+### Learning & Memory
+
+Corrections feed into a **continuous learning loop**:
+
+```
+User corrects a field
+       │
+       ▼
+Store correction in PostgreSQL
+       │
+       ▼
+AI extracts the pattern (keywords, position, regex)
+       │
+       ▼
+Generate embedding via text-embedding-3-small
+       │
+       ▼
+Store in pgvector with IVFFlat index
+       │
+       ▼
+Future extractions query similar patterns
+       │
+       ▼
+Patterns boost confidence for matching fields
+```
+
+After 100 unprocessed corrections, the system triggers a model update (fine-tuning pipeline).
 
 ## Project Structure
 
 ```
-document-processing-system/
 ├── backend/
-│   ├── api/
-│   │   ├── main.py                  # FastAPI app, middleware, routes
-│   │   └── routes/
-│   │       └── documents.py         # Document CRUD, processing, correction endpoints
-│   ├── core/
+│   ├── app/
 │   │   ├── __init__.py
-│   │   ├── config.py                # Settings via pydantic-settings
-│   │   ├── schemas.py               # Pydantic models for all document types
-│   │   ├── ai_client.py             # OpenAI client wrapper
-│   │   ├── validator.py             # Deterministic validation logic
-│   │   └── extractors/
-│   │       ├── __init__.py          # Extractor registry (plugin system)
-│   │       ├── base.py              # Abstract base extractor
-│   │       ├── invoice.py           # Invoice extractor
-│   │       ├── purchase_order.py    # Purchase order extractor
-│   │       ├── contract.py          # Contract extractor
-│   │       └── resume.py            # Resume extractor
-│   ├── models/
-│   │   ├── __init__.py
-│   │   └── database.py              # SQLAlchemy models + DB setup
-│   ├── services/
-│   │   ├── __init__.py
-│   │   └── document_service.py      # Core processing pipeline
-│   └── requirements.txt
+│   │   ├── main.py                    # FastAPI app entry point
+│   │   ├── worker.py                  # Celery worker
+│   │   ├── api/
+│   │   │   ├── __init__.py
+│   │   │   ├── routes.py              # Route aggregator
+│   │   │   └── endpoints/
+│   │   │       ├── __init__.py
+│   │   │       ├── process.py         # Document CRUD, processing, corrections
+│   │   │       └── system.py          # Health, types, document listing
+│   │   ├── ai/
+│   │   │   ├── __init__.py
+│   │   │   ├── llm_client.py          # DeepSeek/OpenAI client
+│   │   │   ├── embeddings.py         # Embedding generation
+│   │   │   └── prompts/
+│   │   │       ├── classification.py  # Classification prompt template
+│   │   │       ├── extraction.py      # Extraction prompt template
+│   │   │       ├── mcq_generation.py  # MCQ generation prompt template
+│   │   │       └── learning.py        # Pattern extraction prompt template
+│   │   ├── core/
+│   │   │   ├── __init__.py
+│   │   │   ├── config.py             # Settings via pydantic-settings
+│   │   │   └── database.py           # SQLAlchemy + session management
+│   │   ├── models/
+│   │   │   ├── __init__.py
+│   │   │   ├── base.py               # Abstract base model
+│   │   │   ├── document.py           # Document + Extraction + MCQDialogue
+│   │   │   ├── schema.py             # DocumentSchema
+│   │   │   ├── correction.py         # UserCorrection
+│   │   │   └── pattern.py            # ExtractionPattern (with embedding)
+│   │   ├── services/
+│   │   │   ├── document_classifier.py    # AI + pattern classification
+│   │   │   ├── extractor_service.py      # Intelligent field extraction
+│   │   │   ├── validation_service.py     # Deterministic validation
+│   │   │   ├── mcq_generator.py          # MCQ dialog generation
+│   │   │   ├── learning_service.py       # Correction learning + patterns
+│   │   │   ├── confidence_analyzer.py    # Confidence scoring
+│   │   │   ├── vector_store.py           # pgvector operations
+│   │   │   └── document_processor.py     # Orchestration pipeline
+│   │   └── processors/
+│   │       ├── ocr_processor.py      # Tesseract + image OCR
+│   │       └── pdf_processor.py      # PyMuPDF text extraction
+│   ├── db/
+│   │   └── init.sql                  # DB schema + seed data
+│   ├── tests/
+│   │   ├── test_services.py          # Service unit tests
+│   │   └── __init__.py
+│   ├── Dockerfile
+│   ├── pyproject.toml
+│   ├── requirements.txt
+│   └── .env.example
 ├── frontend/
 │   ├── src/
 │   │   ├── main.tsx
-│   │   ├── App.tsx                  # Main app component
-│   │   ├── index.css                # Tailwind imports
-│   │   ├── api/
-│   │   │   └── documents.ts         # API client (all endpoints)
-│   │   ├── types/
-│   │   │   └── index.ts             # TypeScript interfaces
-│   │   └── components/
-│   │       ├── Header.tsx           # App header
-│   │       ├── UploadZone.tsx       # Drag-and-drop file upload
-│   │       ├── DocumentList.tsx     # Sidebar document list
-│   │       └── DocumentViewer.tsx   # Extraction display + correction UI
+│   │   ├── App.tsx
+│   │   ├── index.css
+│   │   ├── components/
+│   │   │   ├── Header.tsx
+│   │   │   ├── UploadZone.tsx
+│   │   │   ├── DocumentList.tsx
+│   │   │   ├── DocumentViewer.tsx
+│   │   │   └── MCQDialog.tsx
+│   │   ├── services/
+│   │   │   └── api.ts
+│   │   └── types/
+│   │       └── index.ts
 │   ├── index.html
 │   ├── package.json
 │   ├── vite.config.ts
 │   ├── tsconfig.json
 │   ├── tailwind.config.js
-│   └── postcss.config.js
-├── tests/
-│   ├── test_validator.py            # Validation logic tests
-│   └── test_extractors.py           # Extractor registry + confidence tests
-├── Dockerfile
+│   ├── postcss.config.js
+│   └── Dockerfile
 ├── docker-compose.yml
-├── pyproject.toml
 ├── .gitignore
 └── README.md
 ```
 
-## Setup & Running
+## Quick Start
 
 ### Prerequisites
 
-- Python 3.12+
-- Node.js 20+
-- OpenAI API key
+- Docker & Docker Compose
+- DeepSeek API key (or OpenRouter key)
+- 4GB+ RAM
 
-### Quick Start (Local)
-
-```bash
-# 1. Clone and set up backend
-cd backend
-cp .env.example .env
-# Edit .env: set OPENAI_API_KEY=sk-...
-python -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
-uvicorn api.main:app --reload --port 8000
-
-# 2. In another terminal, set up frontend
-cd frontend
-npm install
-npm run dev
-```
-
-### Docker
+### Setup
 
 ```bash
-export OPENAI_API_KEY=sk-...
-docker compose up --build
+# 1. Clone and enter
+git clone <repo> && cd doc-intelligence-system
+
+# 2. Configure API keys
+cp backend/.env.example backend/.env
+# Edit backend/.env — set DEEPSEEK_API_KEY or OPENROUTER_API_KEY
+
+# 3. Start all services
+docker compose up -d --build
+
+# 4. Run database migrations (auto on first start via init.sql)
 ```
 
-### Verify
+### Access
 
-- Backend: http://localhost:8000/docs (Swagger UI)
-- Frontend: http://localhost:3000
+| Service | URL |
+|---------|-----|
+| **Frontend** | http://localhost:3000 |
+| **Backend API** | http://localhost:8000/docs |
+| **MinIO Console** | http://localhost:9001 (minioadmin:minioadmin) |
 
-### Run Tests
+### Usage Flow
 
-```bash
-cd backend
-pip install -r requirements.txt
-python -m pytest tests/
-```
+1. **Upload** — Drag a PDF invoice into the upload zone
+2. **Auto-classify** — System identifies it as an "invoice" (AI + pattern matching)
+3. **Extract** — Structured data extracted with per-field confidence scores
+4. **Review** — High-confidence fields auto-approved; low-confidence flagged
+5. **MCQ Clarify** — Uncertain fields present an MCQ dialog with options and explanations
+6. **Correct** — User selects the right option or enters a custom value
+7. **Learn** — Correction is stored as a pattern in pgvector; future extractions improve
+8. **Export** — Download structured JSON for downstream systems
 
 ## API Endpoints
 
+### Document Management
+
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/health` | Health check |
-| GET | `/api/types` | List supported document types |
-| POST | `/api/documents/upload` | Upload a document file |
-| POST | `/api/documents/process/{id}` | Classify + extract + validate |
-| GET | `/api/documents/` | List all documents |
-| GET | `/api/documents/{id}` | Get document details |
-| POST | `/api/documents/{id}/correct` | Submit field corrections |
-| GET | `/api/documents/{id}/export` | Export structured JSON |
+| `POST` | `/api/documents/upload` | Upload a document file |
+| `POST` | `/api/documents/{id}/process` | Process (classify + extract + validate) |
+| `GET` | `/api/documents/{id}/status` | Get processing status |
+| `GET` | `/api/documents/{id}/extractions` | Get extracted fields with MCQ dialogs |
+| `POST` | `/api/documents/{id}/corrections` | Submit corrections (triggers learning) |
+| `GET` | `/api/documents/{id}/export` | Export structured JSON |
+| `GET` | `/api/documents/{id}/mcqs` | Get pending MCQ dialogs |
 
-## Live Demo Walkthrough
+### System
 
-1. **Upload**: Drag a PDF invoice into the upload zone (or click to browse)
-2. **Auto-classify**: The system identifies it as an "invoice"
-3. **Extract**: Structured data (invoice number, vendor, line items, totals) is extracted
-4. **Validate**: Fields are checked — missing invoice number shows a red error, suspect dates get a yellow warning
-5. **Review**: The user sees all extracted data with validation banners at the top
-6. **Correct**: Any field can be clicked and edited inline
-7. **Save**: Corrections are saved; status changes to "reviewed"
-8. **Export**: Click "Export" to download the final structured JSON
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/health` | Health check |
+| `GET` | `/api/types` | List supported document types |
+| `GET` | `/api/documents` | List all documents |
+
+## API Example
+
+```bash
+# Upload
+curl -X POST http://localhost:8000/api/documents/upload \
+  -F "file=@invoice.pdf"
+
+# Process
+curl -X POST http://localhost:8000/api/documents/{id}/process
+
+# Get extractions with MCQ dialogs
+curl http://localhost:8000/api/documents/{id}/extractions
+
+# Submit correction (triggers learning)
+curl -X POST http://localhost:8000/api/documents/{id}/corrections \
+  -H "Content-Type: application/json" \
+  -d '{"corrections": [{"extraction_id": "...", "corrected_value": "INV-2024-001"}]}'
+
+# Export structured data
+curl http://localhost:8000/api/documents/{id}/export
+```
+
+## Testing
+
+```bash
+# Backend tests
+docker compose exec backend python -m pytest tests/ -v
+
+# Test specific services
+docker compose exec backend python -m pytest tests/test_services.py -v
+```
+
+## Extending with New Document Types
+
+Add a new document type without code changes by inserting into `document_schemas`:
+
+```sql
+INSERT INTO document_schemas (id, document_type, schema_definition, extraction_prompts, validation_rules)
+VALUES (
+    gen_random_uuid(),
+    'bank_statement',
+    '{
+        "fields": [
+            {"name": "account_holder", "type": "string", "required": true},
+            {"name": "account_number", "type": "string", "required": true},
+            {"name": "statement_period", "type": "string", "required": true},
+            {"name": "opening_balance", "type": "number", "required": true},
+            {"name": "closing_balance", "type": "number", "required": true},
+            {"name": "transactions", "type": "array", "required": false}
+        ]
+    }'::jsonb,
+    '{}'::jsonb,
+    '{}'::jsonb
+);
+```
+
+Or upload a document of an unknown type — the AI will auto-discover it and create the schema interactively.
 
 ## Future Improvements
 
-- **Batch Processing**: Upload and process multiple documents simultaneously
-- **OCR Pipeline**: Integrate Tesseract for scanned document support
-- **More Document Types**: Bank statements, shipping labels, tax forms, ID cards
-- **Fine-tuned Models**: Train smaller models on domain-specific document layouts for faster/cheaper inference
-- **Webhook Notifications**: Push processed data to ERP/CRM systems
-- **User Authentication**: Multi-tenant support with API keys
-- **Confidence Calibration**: Collect user corrections to tune confidence scoring
-- **Streaming Extraction**: Real-time streaming for very large documents
-- **Version History**: Track all corrections and reprocessing events per document
-- **Search & Filter**: Full-text search across extracted data
+- **Multi-page document splitting** — Auto-detect and process each page separately
+- **Batch processing** — Upload multiple documents simultaneously
+- **Active learning pipeline** — Periodic fine-tuning with accumulated corrections
+- **Multi-language support** — Extend classification and extraction prompts
+- **Webhook notifications** — Push processed data to ERP/CRM systems
+- **User authentication** — Multi-tenant with API keys
+- **Template designer UI** — Visual schema editor for new document types
+- **Mobile document capture** — Camera-to-extraction pipeline
 
 ## Assumptions
 
-1. Documents are primarily text-based (PDFs or images with readable text)
-2. AI model has sufficient context window (8K+ tokens) for most documents
-3. Users have valid OpenAI API keys with GPT-4o access
-4. Documents arrive as individual files (not batches)
-5. Single-user system in current iteration (no auth)
-6. English-language documents (extensible via prompt changes)
+1. Documents are primarily text-based (PDFs or clear images)
+2. AI model has internet access (API-based) with 8K+ context window
+3. Valid DeepSeek/OpenRouter API key with sufficient credits
+4. English-language documents (extensible via prompt modifications)
+5. Single-user system in current iteration (no auth layer)
+6. Documents arrive individually (not batch uploads)
 
 ---
 
-Built with FastAPI, React, TypeScript, Tailwind CSS, and OpenAI GPT-4o.
+Built with FastAPI, React, TypeScript, Tailwind CSS, PostgreSQL/pgvector, DeepSeek-V3, and Celery.
